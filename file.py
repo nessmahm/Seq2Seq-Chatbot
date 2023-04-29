@@ -97,49 +97,8 @@ print("\nSample lines from file:")
 
 # putting pairs into variable not a file
 pairs=extractSentencePairs(conversations)
-print(pairs)
+#print(pairs)
 
-# Tokenize text data
-tokenizer = tf.keras.preprocessing.text.Tokenizer(filters='')
-tokenizer.fit_on_texts([pair[0] for pair in pairs] + [pair[1] for pair in pairs])
-input_sequences = tokenizer.texts_to_sequences([pair[0] for pair in pairs])
-target_sequences = tokenizer.texts_to_sequences([pair[1] for pair in pairs])
-
-"""
-# trim ddata  , Create vocabulary
-word2idx = tokenizer.word_index
-idx2word = {v: k for k, v in word2idx.items()}
-vocab_size = len(word2idx) + 1
-
-print("Number of sentence pairs:", len(input_sequences))
-
-print("\nInput sequence sample:")
-for i in range(5):
-    print(input_sequences[i])
-
-print("\nTarget sequence sample:")
-for i in range(5):
-    print(target_sequences[i])
-
-print("\nWord to index mapping sample:")
-for i, (word, idx) in enumerate(word2idx.items()):
-    if i < 10:
-        print(f"{word}: {idx}")
-
-print("\nIndex to word mapping sample:")
-for i, word in enumerate(idx2word):
-    if i < 10:
-        print(f"{i}: {word}")
-"""
-
-
-
-
-#trim data :
-# Default word tokens
-PAD_token = 0  # Used for padding short sentences
-SOS_token = 1  # Start-of-sentence token
-EOS_token = 2  # End-of-sentence token
 
 class Voc:
     def __init__(self, name):
@@ -147,8 +106,8 @@ class Voc:
         self.trimmed = False
         self.word2index = {}
         self.word2count = {}
-        self.index2word = {PAD_token: "PAD", SOS_token: "SOS", EOS_token: "EOS"}
-        self.num_words = 3  # Count SOS, EOS, PAD
+        self.index2word = {}
+        self.num_words = 4  # Count SOS, EOS, PAD, OUT
 
     def addSentence(self, sentence):
         for word in sentence.split(' '):
@@ -182,8 +141,8 @@ class Voc:
         # Reinitialize dictionaries
         self.word2index = {}
         self.word2count = {}
-        self.index2word = {PAD_token: "PAD", SOS_token: "SOS", EOS_token: "EOS"}
-        self.num_words = 3 # Count default tokens
+        self.index2word = {}
+        self.num_words = 4 # Count default tokens
 
         for word in keep_words:
             self.addWord(word)
@@ -202,7 +161,20 @@ def normalizeString(s):
     #removes diacritics from the string, and then lower and strip are
     # used to convert the string to lowercase and remove any leading/trailing
     # whitespace.
-    s = unicodeToAscii(s.lower().strip())
+    s = s.lower()
+    s = re.sub(r"i'm", "i am", s)
+    s = re.sub(r"he's", "he is", s)
+    s = re.sub(r"she's", "she is", s)
+    s = re.sub(r"that's", "that is", s)
+    s = re.sub(r"what's", "what is", s)
+    s = re.sub(r"where's", "where is", s)
+    s = re.sub(r"\'ll", " will", s)
+    s = re.sub(r"\'ve", " have", s)
+    s = re.sub(r"\'re", " are", s)
+    s = re.sub(r"\'d", " would", s)
+    s = re.sub(r"won't", "will not", s)
+    s = re.sub(r"can't", "can not", s)
+    s = re.sub(r"[^\w\s]", "", s)
     #This step adds a space before any punctuation marks (. ! ?) so
     # that they can be treated as separate tokens in the later stages
     # of the NLP pipeline
@@ -237,7 +209,8 @@ def loadPrepareData(voc , pairs ):
     print("Start preparing training data ...")
 
     print("Read {!s} sentence pairs".format(len(pairs)))
-    pairs = filterPairs(pairs)
+    #limiting for testing
+    pairs = filterPairs(pairs)[:10000]
     print("Trimmed to {!s} sentence pairs".format(len(pairs)))
     print("Counting words...")
     for pair in pairs:
@@ -250,6 +223,8 @@ def loadPrepareData(voc , pairs ):
 # Load/Assemble voc and pairs
 save_dir = os.path.join("data", "save")
 voc, pairs = loadPrepareData(voc,pairs)
+#for testing we limit the pairs
+pairs = pairs[:10000]
 # Print some pairs to validate
 print("\npairs:")
 for pair in pairs[:10]:
@@ -285,7 +260,7 @@ def trimRareWords(voc, pairs, MIN_COUNT):
     return keep_pairs
 # Trim voc and pairs
 pairs = trimRareWords(voc, pairs, MIN_COUNT)
-def indexesFromSentence(voc, sentence):
+"""def indexesFromSentence(voc, sentence):
     return [voc.word2index[word] for word in sentence.split(' ')] + [EOS_token]
 
 #The function returns a list of sequences, where each sequence
@@ -346,9 +321,393 @@ small_batch_size = 5
 batches = batch2TrainData(voc, [random.choice(pairs) for _ in range(small_batch_size)])
 input_variable, lengths, target_variable, mask, max_target_len = batches
 
+
+print(np.shape(input_variable))
 print("input_variable:", input_variable)
 print("lengths:", lengths)
 print("target_variable:", target_variable)
 print("mask:", mask)
-print("max_target_len:", max_target_len)
+print("max_target_len:", max_target_len)"""
 
+from keras.layers import *
+from keras.models import *
+from keras.utils import *
+from keras.initializers import *
+from keras.optimizers import Adam
+import tensorflow as tf
+
+
+
+"""tf_input = tf.convert_to_tensor(input_variable,dtype=tf.int32)
+tf_target = tf.convert_to_tensor(target_variable,dtype=tf.int32)
+decoder_target_data = np.zeros_like(tf_target)
+decoder_target_data[:, :-1] = tf_target[:, 1:]"""
+
+# Define the encoder
+
+input_characters = set()
+target_characters = set()
+input_texts = []
+target_texts = []
+for input_text, target_text in pairs:
+    target_text = "SOS " + target_text + " EOS"
+    input_texts.append(input_text)
+    target_texts.append(target_text)
+    for token in input_text.split():
+        if token not in input_characters:
+            input_characters.add(token)
+    for token in target_text.split():
+        if token not in target_characters:
+            target_characters.add(token)
+
+
+input_characters = sorted(list(input_characters))
+target_characters = sorted(list(target_characters))
+num_encoder_tokens = len(input_characters)
+num_decoder_tokens = len(target_characters)
+max_encoder_seq_length = max([len(txt) for txt in input_texts])
+max_decoder_seq_length = max([len(txt) for txt in target_texts])
+MAX_LENGTH = MAX_LENGTH + 4 #for the added tokens
+
+input_token_index = dict(
+    [(char, i) for i, char in enumerate(input_characters)])
+target_token_index = dict(
+    [(char, i) for i, char in enumerate(target_characters)])
+
+print('input',input_token_index)
+print('output',target_token_index)
+
+print('Number of samples:', len(input_texts))
+print('Number of unique input tokens:', num_encoder_tokens)
+print('Number of unique output tokens:', num_decoder_tokens)
+print('Max sequence length for inputs:', max_encoder_seq_length)
+print('Max sequence length for outputs:', max_decoder_seq_length)
+"""encoder_input_data = np.zeros(
+    (len(input_texts), MAX_LENGTH, num_encoder_tokens),
+    dtype='float32')
+decoder_input_data = np.zeros(
+    (len(input_texts), MAX_LENGTH, num_decoder_tokens),
+    dtype='float32')
+decoder_target_data = np.zeros(
+    (len(input_texts), MAX_LENGTH, num_decoder_tokens),
+    dtype='float32')
+
+for i, (input_text, target_text) in enumerate(zip(input_texts, target_texts)):
+    for t, char in enumerate(input_text.split()):
+        encoder_input_data[i, t, input_token_index[char]] = 1.
+    for t, char in enumerate(target_text.split(" ")):
+        # decoder_target_data is ahead of decoder_input_data by one timestep
+        decoder_input_data[i, t, target_token_index[char]] = 1.
+        if t > 0:
+            # decoder_target_data will be ahead by one timestep
+            # and will not include the start character.
+            decoder_target_data[i, t - 1, target_token_index[char]] = 1."""
+tokens = ['PAD', 'EOS', 'OUT', 'SOS']
+x = voc.num_words
+for token in tokens:
+    voc.word2index[token] = x
+    x += 1
+    voc.num_words+=1
+voc.word2index['PAD'] = 0
+print(voc.word2index)
+encoder_inp = []
+for line in input_texts:
+    lst = []
+    for word in line.split():
+        if word not in voc.word2index:
+            lst.append(voc.word2index["OUT"])
+        else:
+            lst.append(voc.word2index[word])
+
+    encoder_inp.append(lst)
+
+decoder_inp = []
+for line in target_texts:
+    lst = []
+    for word in line.split():
+        if word not in voc.word2index:
+            lst.append(voc.word2index["OUT"])
+        else:
+            lst.append(voc.word2index[word])
+    decoder_inp.append(lst)
+
+
+
+### inv answers dict ###
+voc.index2word = {w: v for v, w in voc.word2index.items()}
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+
+encoder_inp = pad_sequences(encoder_inp, MAX_LENGTH, padding='post', truncating='post')
+decoder_inp = pad_sequences(decoder_inp, MAX_LENGTH, padding='post', truncating='post')
+
+
+
+
+decoder_final_output = []
+for i in decoder_inp:
+    decoder_final_output.append(i[1:])
+
+decoder_final_output = pad_sequences(decoder_final_output, MAX_LENGTH, padding='post', truncating='post')
+
+
+
+from tensorflow.keras.utils import to_categorical
+decoder_final_output = to_categorical(decoder_final_output, voc.num_words)
+
+
+
+print(decoder_final_output.shape)
+
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Dense, Embedding, LSTM, Input
+
+
+enc_inp = Input(shape=(MAX_LENGTH, ))
+dec_inp = Input(shape=(MAX_LENGTH, ))
+
+
+VOCAB_SIZE = voc.num_words
+embed = Embedding(VOCAB_SIZE+1, output_dim=50,
+                  input_length=MAX_LENGTH,
+                  trainable=True
+                  )
+
+
+enc_embed = embed(enc_inp)
+enc_lstm = LSTM(400, return_sequences=True, return_state=True)
+enc_op, h, c = enc_lstm(enc_embed)
+enc_states = [h, c]
+
+
+dec_embed = embed(dec_inp)
+dec_lstm = LSTM(400, return_sequences=True, return_state=True)
+dec_op, _, _ = dec_lstm(dec_embed, initial_state=enc_states)
+
+dense = Dense(VOCAB_SIZE, activation='softmax')
+
+dense_op = dense(dec_op)
+
+model = Model([enc_inp, dec_inp], dense_op)
+
+
+
+
+model.compile(loss='categorical_crossentropy',metrics=['acc'],optimizer='adam')
+
+model.fit([encoder_inp, decoder_inp],decoder_final_output,epochs=50)
+model.save('training_model_2000.h5')
+
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Input
+
+#model = load_model('training_model_2000.h5')
+enc_model = Model([enc_inp], enc_states)
+decoder_state_input_h = Input(shape=(400,))
+decoder_state_input_c = Input(shape=(400,))
+
+decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
+
+
+decoder_outputs, state_h, state_c = dec_lstm(dec_embed ,
+                                    initial_state=decoder_states_inputs)
+
+
+decoder_states = [state_h, state_c]
+
+
+dec_model = Model([dec_inp]+ decoder_states_inputs,
+                                      [decoder_outputs]+ decoder_states)
+
+
+print(voc.word2index['hello'])
+print("##########################################")
+print("#       start chatting ver. 1.0          #")
+print("##########################################")
+
+
+prepro1 = ""
+while prepro1 != 'q':
+    prepro1  = input("you : ")
+    ## prepro1 = "Hello"
+
+    prepro1 = normalizeString(prepro1)
+    ## prepro1 = "hello"
+
+    prepro = [prepro1]
+    ## prepro1 = ["hello"]
+
+    txt = []
+    for x in prepro:
+        # x = "hello"
+        lst = []
+        for y in x.split():
+            ## y = "hello"
+            try:
+                lst.append(voc.word2index[y])
+                ## vocab['hello'] = 454
+            except KeyError:
+                lst.append(voc.word2index["OUT"])
+        txt.append(lst)
+
+    print('text',txt)
+    ## txt = [[454]]
+    txt = pad_sequences(txt, MAX_LENGTH, padding='post')
+
+    ## txt = [[454,0,0,0,.........13]]
+
+    stat = enc_model.predict(txt)
+
+    empty_target_seq = np.zeros((1, 1))
+    ##   empty_target_seq = [0]
+
+    empty_target_seq[0, 0] = voc.word2index['SOS']
+    ##    empty_target_seq = [255]
+    stop_condition = False
+    decoded_translation = ''
+
+    while not stop_condition:
+        dec_outputs, h, c = dec_model.predict([empty_target_seq] + stat)
+        decoder_concat_input = dense(dec_outputs)
+        ## decoder_concat_input = [0.1, 0.2, .4, .0, ...............]
+
+        sampled_word_index = np.argmax(decoder_concat_input[0, -1, :])
+        ## sampled_word_index = [2]
+        print("word index",sampled_word_index)
+
+        sampled_word = voc.index2word[sampled_word_index]
+        if sampled_word != 'EOS':
+            if (decoded_translation != ''):
+                sampled_word = ' ' + sampled_word
+            decoded_translation += sampled_word
+
+        if sampled_word == 'EOS' or len(decoded_translation.split()) > MAX_LENGTH:
+            stop_condition = True
+
+        empty_target_seq = np.zeros((1, 1))
+        empty_target_seq[0, 0] = sampled_word_index
+        ## <SOS> - > hi
+        ## hi --> <EOS>
+        stat = [h, c]
+
+    print("chatbot attention : ", decoded_translation)
+    print("==============================================")
+"""print(np.shape(tf_target))
+print(np.shape(tf_input))
+print(np.shape([tf_input, tf_target]))
+print(np.shape([encoder_inputs, decoder_inputs]))
+# Define an input sequence and process it.
+#Dimensionality
+dimensionality = 256
+#The batch size and number of epochs
+batch_size = 50
+epochs = 20
+latent_dim = 256
+#Encoder
+encoder_inputs = Input(shape=(None, num_encoder_tokens))
+encoder_lstm = LSTM(dimensionality, return_state=True)
+encoder_outputs, state_hidden, state_cell = encoder_lstm(encoder_inputs)
+encoder_states = [state_hidden, state_cell]
+#Decoder
+decoder_inputs = Input(shape=(None, num_decoder_tokens))
+decoder_lstm = LSTM(dimensionality, return_sequences=True, return_state=True)
+decoder_lstm = LSTM(dimensionality, return_sequences=True, return_state=True)
+decoder_outputs, decoder_state_hidden, decoder_state_cell = decoder_lstm(decoder_inputs, initial_state=encoder_states)
+decoder_dense = Dense(num_decoder_tokens, activation='softmax')
+decoder_outputs = decoder_dense(decoder_outputs)# Define the model that will turn
+# `encoder_input_data` & `decoder_input_data` into `decoder_target_data`
+model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
+
+# Compile the model
+#Compiling
+model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'], sample_weight_mode='temporal')
+#Training
+model.fit([encoder_input_data, decoder_input_data], decoder_target_data, batch_size = batch_size, epochs = epochs, validation_split = 0.2)
+
+model.save('training_model_2000.h5')
+from keras.models import load_model
+training_model = load_model('training_model_2000.h5')
+encoder_inputs = training_model.input[0]
+encoder_outputs, state_h_enc, state_c_enc = training_model.layers[2].output
+encoder_states = [state_h_enc, state_c_enc]
+encoder_model = Model(encoder_inputs, encoder_states)
+latent_dim = 256
+decoder_state_input_hidden = Input(shape=(latent_dim,))
+decoder_state_input_cell = Input(shape=(latent_dim,))
+decoder_states_inputs = [decoder_state_input_hidden, decoder_state_input_cell]
+decoder_outputs, state_hidden, state_cell = decoder_lstm(decoder_inputs, initial_state=decoder_states_inputs)
+decoder_states = [state_hidden, state_cell]
+decoder_outputs = decoder_dense(decoder_outputs)
+decoder_model = Model([decoder_inputs] + decoder_states_inputs, [decoder_outputs] + decoder_states)
+
+
+# Reverse-lookup token index to decode sequences back to
+# something readable.
+reverse_input_char_index = dict(
+    (i, char) for char, i in input_token_index.items())
+reverse_target_char_index = dict(
+    (i, char) for char, i in target_token_index.items())
+
+
+def decode_sequence(test_input):
+    # Getting the output states to pass into the decoder
+    states_value = encoder_model.predict(test_input)
+    # Generating empty target sequence of length 1
+    target_seq = np.zeros((1, 1, num_decoder_tokens))
+    # Setting the first token of target sequence with the start token
+    target_seq[0, 0, target_token_index['\t']] = 1.
+
+    # A variable to store our response word by word
+    decoded_sentence = ''
+
+    stop_condition = False
+
+    while not stop_condition:
+        # Predicting output tokens with probabilities and states
+        output_tokens, hidden_state, cell_state = decoder_model.predict([target_seq] + states_value)
+        # Choosing the one with highest probability
+        sampled_token_index = np.argmax(output_tokens[0, -1, :])
+        sampled_token = reverse_target_char_index[sampled_token_index]
+        decoded_sentence += " " + sampled_token
+        # Stop if hit max length or found the stop token
+        if (sampled_token == '\n' or len(decoded_sentence) > MAX_LENGTH):
+            stop_condition = True
+        # Update the target sequence
+        target_seq = np.zeros((1, 1, num_decoder_tokens))
+        target_seq[0, 0, sampled_token_index] = 1.
+        # Update states
+        states_value = [hidden_state, cell_state]
+    return decoded_sentence
+
+
+def string_to_matrix(user_input):
+    tokens = normalizeString(user_input).split()[:MAX_LENGTH]
+    user_input_matrix = np.zeros(
+        (1, MAX_LENGTH, num_encoder_tokens),
+        dtype='float32')
+    for timestep, token in enumerate(tokens):
+        if token in input_token_index:
+            user_input_matrix[0, timestep, input_token_index[token]] = 1.
+    return user_input_matrix
+input_prompt = 'hello!'
+generated_response = generate_response(input_prompt)
+print(generated_response)
+for seq_index in range(10):
+    # Take one sequence (part of the training set)
+    # for trying out decoding.
+    input_seq = string_to_matrix(input_texts[seq_index])
+    decoded_sentence = decode_sequence(input_seq)
+    print('-')
+    print('Input sentence:', input_texts[seq_index])
+    print('Decoded sentence:', decoded_sentence)
+
+def chat():
+    user_input = input('Hi, How can I help you today?')
+    print(decode_sequence(string_to_matrix(user_input)))
+    stop_condition = False
+    while stop_condition == False:
+        user_input = input()
+        if user_input.upper()== 'Q' or user_input.upper() == 'QUIT':
+            stop_condition = True
+            break
+        print(decode_sequence(string_to_matrix(user_input)))
+chat()"""
