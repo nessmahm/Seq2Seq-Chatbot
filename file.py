@@ -210,7 +210,7 @@ def loadPrepareData(voc , pairs ):
 
     print("Read {!s} sentence pairs".format(len(pairs)))
     #limiting for testing
-    pairs = filterPairs(pairs)[:10000]
+    pairs = filterPairs(pairs)
     print("Trimmed to {!s} sentence pairs".format(len(pairs)))
     print("Counting words...")
     for pair in pairs:
@@ -224,11 +224,8 @@ def loadPrepareData(voc , pairs ):
 save_dir = os.path.join("data", "save")
 voc, pairs = loadPrepareData(voc,pairs)
 #for testing we limit the pairs
-pairs = pairs[:10000]
+pairs = pairs[:60000]
 # Print some pairs to validate
-print("\npairs:")
-for pair in pairs[:10]:
-    print(pair)
 
 MIN_COUNT = 3    # Minimum word count threshold for trimming
 def trimRareWords(voc, pairs, MIN_COUNT):
@@ -260,74 +257,6 @@ def trimRareWords(voc, pairs, MIN_COUNT):
     return keep_pairs
 # Trim voc and pairs
 pairs = trimRareWords(voc, pairs, MIN_COUNT)
-"""def indexesFromSentence(voc, sentence):
-    return [voc.word2index[word] for word in sentence.split(' ')] + [EOS_token]
-
-#The function returns a list of sequences, where each sequence
-# is zero-padded to the length of the longest sequence in the input list.
-def zeroPadding(l, fillvalue=PAD_token):
-
-    #itertools.zip_longest function works by taking the elements of each
-    # sequence in the input list in turn and grouping them together. If
-    # the sequences are of different lengths, the missing values are filled
-    # with the specified fillvalue. The * in zip_longest(*l) is used to
-    # unpack the list of sequences, so that each sequence is passed as a
-    # separate argument to the zip_longest function.
-    return list(itertools.zip_longest(*l, fillvalue=fillvalue))
-
-def binaryMatrix(l, value=PAD_token):
-    m = []
-    for i, seq in enumerate(l):
-        m.append([])
-        for token in seq:
-            if token == PAD_token:
-                m[i].append(0)
-            else:
-                m[i].append(1)
-    return m
-
-# Returns padded input sequence tensor and lengths
-def inputVar(l, voc):
-    indexes_batch = [indexesFromSentence(voc, sentence) for sentence in l]
-    lengths = t.tensor([len(indexes) for indexes in indexes_batch])
-    padList = zeroPadding(indexes_batch)
-    padVar = t.LongTensor(padList)
-    return padVar, lengths
-
-# Returns padded target sequence tensor, padding mask, and max target length
-def outputVar(l, voc):
-    indexes_batch = [indexesFromSentence(voc, sentence) for sentence in l]
-    max_target_len = max([len(indexes) for indexes in indexes_batch])
-    padList = zeroPadding(indexes_batch)
-    mask = binaryMatrix(padList)
-    mask = t.BoolTensor(mask)
-    padVar = t.LongTensor(padList)
-    return padVar, mask, max_target_len
-
-# Returns all items for a given batch of pairs
-def batch2TrainData(voc, pair_batch):
-    pair_batch.sort(key=lambda x: len(x[0].split(" ")), reverse=True)
-    input_batch, output_batch = [], []
-    for pair in pair_batch:
-        input_batch.append(pair[0])
-        output_batch.append(pair[1])
-    inp, lengths = inputVar(input_batch, voc)
-    output, mask, max_target_len = outputVar(output_batch, voc)
-    return inp, lengths, output, mask, max_target_len
-
-
-# Example for validation
-small_batch_size = 5
-batches = batch2TrainData(voc, [random.choice(pairs) for _ in range(small_batch_size)])
-input_variable, lengths, target_variable, mask, max_target_len = batches
-
-
-print(np.shape(input_variable))
-print("input_variable:", input_variable)
-print("lengths:", lengths)
-print("target_variable:", target_variable)
-print("mask:", mask)
-print("max_target_len:", max_target_len)"""
 
 from keras.layers import *
 from keras.models import *
@@ -472,7 +401,6 @@ embed = Embedding(VOCAB_SIZE+1, output_dim=50,
                   trainable=True
                   )
 
-
 enc_embed = embed(enc_inp)
 enc_lstm = LSTM(400, return_sequences=True, return_state=True)
 enc_op, h, c = enc_lstm(enc_embed)
@@ -497,40 +425,34 @@ model.compile(loss='categorical_crossentropy',metrics=['acc'],optimizer='adam')
 model.fit([encoder_inp, decoder_inp],decoder_final_output,epochs=50)
 model.save('training_model_2000.h5')
 
-from tensorflow.keras.models import Model
-from tensorflow.keras.layers import Input
+def getTensorsFromIndex(index):
+    input = []
+    output = []
+    for x in input_texts[index]:
+        lst = []
+        for y in x.split():
+            try:
+                lst.append(voc.word2index[y])
+            except KeyError:
+                lst.append(voc.word2index["OUT"])
+        input.append(lst)
 
-#model = load_model('training_model_2000.h5')
-enc_model = Model([enc_inp], enc_states)
-decoder_state_input_h = Input(shape=(400,))
-decoder_state_input_c = Input(shape=(400,))
+    for x in target_texts[index]:
+        lst = []
+        for y in x.split():
+            try:
+                lst.append(voc.word2index[y])
+            except KeyError:
+                lst.append(voc.word2index["OUT"])
+        output.append(lst)
 
-decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
+    ## txt = [[454]]
+    input = pad_sequences(input, MAX_LENGTH, padding='post')
+    output = pad_sequences(output, MAX_LENGTH, padding='post')
+    return [input, output]
 
-
-decoder_outputs, state_h, state_c = dec_lstm(dec_embed ,
-                                    initial_state=decoder_states_inputs)
-
-
-decoder_states = [state_h, state_c]
-
-
-dec_model = Model([dec_inp]+ decoder_states_inputs,
-                                      [decoder_outputs]+ decoder_states)
-
-
-print(voc.word2index['hello'])
-print("##########################################")
-print("#       start chatting ver. 1.0          #")
-print("##########################################")
-
-
-prepro1 = ""
-while prepro1 != 'q':
-    prepro1  = input("you : ")
-    ## prepro1 = "Hello"
-
-    prepro1 = normalizeString(prepro1)
+def getTensor(input):
+    prepro1 = normalizeString(input)
     ## prepro1 = "hello"
 
     prepro = [prepro1]
@@ -549,7 +471,33 @@ while prepro1 != 'q':
                 lst.append(voc.word2index["OUT"])
         txt.append(lst)
 
-    print('text',txt)
+    print('text', txt)
+    ## txt = [[454]]
+    txt = pad_sequences(txt, MAX_LENGTH, padding='post')
+    return txt
+
+
+def generate_response(input):
+    prepro1 = normalizeString(input)
+    ## prepro1 = "hello"
+
+    prepro = [prepro1]
+    ## prepro1 = ["hello"]
+
+    txt = []
+    for x in prepro:
+        # x = "hello"
+        lst = []
+        for y in x.split():
+            ## y = "hello"
+            try:
+                lst.append(voc.word2index[y])
+                ## vocab['hello'] = 454
+            except KeyError:
+                lst.append(voc.word2index["OUT"])
+        txt.append(lst)
+
+    print('text', txt)
     ## txt = [[454]]
     txt = pad_sequences(txt, MAX_LENGTH, padding='post')
 
@@ -572,7 +520,7 @@ while prepro1 != 'q':
 
         sampled_word_index = np.argmax(decoder_concat_input[0, -1, :])
         ## sampled_word_index = [2]
-        print("word index",sampled_word_index)
+        print("word index", sampled_word_index)
 
         sampled_word = voc.index2word[sampled_word_index]
         if sampled_word != 'EOS':
@@ -588,126 +536,55 @@ while prepro1 != 'q':
         ## <SOS> - > hi
         ## hi --> <EOS>
         stat = [h, c]
+        return decoded_translation
+import numpy as np
+import tensorflow as tf
+from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Dense, Embedding, LSTM, Input
+from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.losses import categorical_crossentropy
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras import backend as K
 
-    print("chatbot attention : ", decoded_translation)
+
+
+#model = load_model('training_model_2000.h5')
+enc_model = Model([enc_inp], enc_states)
+decoder_state_input_h = Input(shape=(400,))
+decoder_state_input_c = Input(shape=(400,))
+
+decoder_states_inputs = [decoder_state_input_h, decoder_state_input_c]
+
+
+decoder_outputs, state_h, state_c = dec_lstm(dec_embed ,
+                                    initial_state=decoder_states_inputs)
+
+
+decoder_states = [state_h, state_c]
+
+
+dec_model = Model([dec_inp]+ decoder_states_inputs,
+                                      [decoder_outputs]+ decoder_states)
+import tensorflow as tf
+import numpy as np
+
+import numpy as np
+from tensorflow.keras.layers import Input, Embedding, LSTM, Dense
+from tensorflow.keras.models import Model
+from tensorflow.keras.preprocessing.sequence import pad_sequences
+
+
+
+
+
+print(voc.word2index['hello'])
+print("##########################################")
+print("#       start chatting ver. 1.0          #")
+print("##########################################")
+user_input = ""
+while user_input != 'q':
+    user_input = input("you : ")
+    print("chatbot attention : ", generate_response(user_input))
     print("==============================================")
-"""print(np.shape(tf_target))
-print(np.shape(tf_input))
-print(np.shape([tf_input, tf_target]))
-print(np.shape([encoder_inputs, decoder_inputs]))
-# Define an input sequence and process it.
-#Dimensionality
-dimensionality = 256
-#The batch size and number of epochs
-batch_size = 50
-epochs = 20
-latent_dim = 256
-#Encoder
-encoder_inputs = Input(shape=(None, num_encoder_tokens))
-encoder_lstm = LSTM(dimensionality, return_state=True)
-encoder_outputs, state_hidden, state_cell = encoder_lstm(encoder_inputs)
-encoder_states = [state_hidden, state_cell]
-#Decoder
-decoder_inputs = Input(shape=(None, num_decoder_tokens))
-decoder_lstm = LSTM(dimensionality, return_sequences=True, return_state=True)
-decoder_lstm = LSTM(dimensionality, return_sequences=True, return_state=True)
-decoder_outputs, decoder_state_hidden, decoder_state_cell = decoder_lstm(decoder_inputs, initial_state=encoder_states)
-decoder_dense = Dense(num_decoder_tokens, activation='softmax')
-decoder_outputs = decoder_dense(decoder_outputs)# Define the model that will turn
-# `encoder_input_data` & `decoder_input_data` into `decoder_target_data`
-model = Model([encoder_inputs, decoder_inputs], decoder_outputs)
-
-# Compile the model
-#Compiling
-model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'], sample_weight_mode='temporal')
-#Training
-model.fit([encoder_input_data, decoder_input_data], decoder_target_data, batch_size = batch_size, epochs = epochs, validation_split = 0.2)
-
-model.save('training_model_2000.h5')
-from keras.models import load_model
-training_model = load_model('training_model_2000.h5')
-encoder_inputs = training_model.input[0]
-encoder_outputs, state_h_enc, state_c_enc = training_model.layers[2].output
-encoder_states = [state_h_enc, state_c_enc]
-encoder_model = Model(encoder_inputs, encoder_states)
-latent_dim = 256
-decoder_state_input_hidden = Input(shape=(latent_dim,))
-decoder_state_input_cell = Input(shape=(latent_dim,))
-decoder_states_inputs = [decoder_state_input_hidden, decoder_state_input_cell]
-decoder_outputs, state_hidden, state_cell = decoder_lstm(decoder_inputs, initial_state=decoder_states_inputs)
-decoder_states = [state_hidden, state_cell]
-decoder_outputs = decoder_dense(decoder_outputs)
-decoder_model = Model([decoder_inputs] + decoder_states_inputs, [decoder_outputs] + decoder_states)
 
 
-# Reverse-lookup token index to decode sequences back to
-# something readable.
-reverse_input_char_index = dict(
-    (i, char) for char, i in input_token_index.items())
-reverse_target_char_index = dict(
-    (i, char) for char, i in target_token_index.items())
-
-
-def decode_sequence(test_input):
-    # Getting the output states to pass into the decoder
-    states_value = encoder_model.predict(test_input)
-    # Generating empty target sequence of length 1
-    target_seq = np.zeros((1, 1, num_decoder_tokens))
-    # Setting the first token of target sequence with the start token
-    target_seq[0, 0, target_token_index['\t']] = 1.
-
-    # A variable to store our response word by word
-    decoded_sentence = ''
-
-    stop_condition = False
-
-    while not stop_condition:
-        # Predicting output tokens with probabilities and states
-        output_tokens, hidden_state, cell_state = decoder_model.predict([target_seq] + states_value)
-        # Choosing the one with highest probability
-        sampled_token_index = np.argmax(output_tokens[0, -1, :])
-        sampled_token = reverse_target_char_index[sampled_token_index]
-        decoded_sentence += " " + sampled_token
-        # Stop if hit max length or found the stop token
-        if (sampled_token == '\n' or len(decoded_sentence) > MAX_LENGTH):
-            stop_condition = True
-        # Update the target sequence
-        target_seq = np.zeros((1, 1, num_decoder_tokens))
-        target_seq[0, 0, sampled_token_index] = 1.
-        # Update states
-        states_value = [hidden_state, cell_state]
-    return decoded_sentence
-
-
-def string_to_matrix(user_input):
-    tokens = normalizeString(user_input).split()[:MAX_LENGTH]
-    user_input_matrix = np.zeros(
-        (1, MAX_LENGTH, num_encoder_tokens),
-        dtype='float32')
-    for timestep, token in enumerate(tokens):
-        if token in input_token_index:
-            user_input_matrix[0, timestep, input_token_index[token]] = 1.
-    return user_input_matrix
-input_prompt = 'hello!'
-generated_response = generate_response(input_prompt)
-print(generated_response)
-for seq_index in range(10):
-    # Take one sequence (part of the training set)
-    # for trying out decoding.
-    input_seq = string_to_matrix(input_texts[seq_index])
-    decoded_sentence = decode_sequence(input_seq)
-    print('-')
-    print('Input sentence:', input_texts[seq_index])
-    print('Decoded sentence:', decoded_sentence)
-
-def chat():
-    user_input = input('Hi, How can I help you today?')
-    print(decode_sequence(string_to_matrix(user_input)))
-    stop_condition = False
-    while stop_condition == False:
-        user_input = input()
-        if user_input.upper()== 'Q' or user_input.upper() == 'QUIT':
-            stop_condition = True
-            break
-        print(decode_sequence(string_to_matrix(user_input)))
-chat()"""
